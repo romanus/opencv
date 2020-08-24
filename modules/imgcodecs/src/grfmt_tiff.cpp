@@ -273,12 +273,15 @@ bool TiffDecoder::readHeader()
         {
             bool isGrayScale = photometric == PHOTOMETRIC_MINISWHITE || photometric == PHOTOMETRIC_MINISBLACK;
             uint16 bpp = 8, ncn = isGrayScale ? 1 : 3;
+            int16 sample_format = 1;
             CV_TIFF_CHECK_CALL(TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &bpp));
+            CV_TIFF_CHECK_CALL(TIFFGetField(tif, TIFFTAG_SAMPLEFORMAT, &sample_format));
             CV_TIFF_CHECK_CALL_DEBUG(TIFFGetField(tif, TIFFTAG_SAMPLESPERPIXEL, &ncn));
 
             m_width = wdth;
             m_height = hght;
-            if (ncn == 3 && photometric == PHOTOMETRIC_LOGLUV)
+            if (ncn == 3 && photometric == PHOTOMETRIC_LOGLUV
+                && sample_format == SAMPLEFORMAT_IEEEFP)
             {
                 m_type = CV_32FC3;
                 m_hdr = true;
@@ -299,15 +302,18 @@ bool TiffDecoder::readHeader()
                     result = true;
                     break;
                 case 8:
-                    m_type = CV_MAKETYPE(CV_8U, !isGrayScale ? wanted_channels : 1);
+                    int depth = (sample_format == SAMPLEFORMAT_INT) ? CV_8S : CV_8U;
+                    m_type = CV_MAKETYPE(depth, !isGrayScale ? wanted_channels : 1);
                     result = true;
                     break;
                 case 16:
-                    m_type = CV_MAKETYPE(CV_16U, !isGrayScale ? wanted_channels : 1);
+                    int depth = (sample_format == SAMPLEFORMAT_INT) ? CV_16S : CV_16U;
+                    m_type = CV_MAKETYPE(depth, !isGrayScale ? wanted_channels : 1);
                     result = true;
                     break;
                 case 32:
-                    m_type = CV_MAKETYPE(CV_32F, wanted_channels);
+                    int depth = (sample_format == SAMPLEFORMAT_INT) ? CV_32S : CV_32F;
+                    m_type = CV_MAKETYPE(depth, wanted_channels);
                     result = true;
                     break;
                 case 64:
@@ -423,7 +429,7 @@ bool  TiffDecoder::readData( Mat& img )
 
     bool color = img.channels() > 1;
 
-    CV_CheckType(type_, depth == CV_8U || depth == CV_16U || depth == CV_32F || depth == CV_64F, "");
+    CV_CheckType(type_, depth == CV_8U || depth == CV_8S || depth == CV_16U || depth == CV_16S || depth == CV_32S || depth == CV_32F || depth == CV_64F, "");
 
     if (m_width && m_height)
     {
@@ -487,11 +493,6 @@ bool  TiffDecoder::readData( Mat& img )
                 // we will use TIFFReadRGBA* functions, so allocate temporary buffer for 32bit RGBA
                 bpp = 8;
                 ncn = 4;
-            }
-            else if (dst_bpp == 32 || dst_bpp == 64)
-            {
-                CV_Assert(ncn == img.channels());
-                CV_TIFF_CHECK_CALL(TIFFSetField(tif, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_IEEEFP));
             }
             const size_t buffer_size = (bpp / bitsPerByte) * ncn * tile_height0 * tile_width0;
             AutoBuffer<uchar> _buffer(buffer_size);
@@ -625,6 +626,7 @@ bool  TiffDecoder::readData( Mat& img )
                         }
 
                         case 32:
+                            //TODO: to add CV_32S images copying
                         case 64:
                         {
                             if( !is_tiled )
